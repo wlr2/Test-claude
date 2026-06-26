@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- viewport-fit=cover lets us use the safe-area insets on notched iPads/iPhones -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="color-scheme" content="light dark">
+<title>Planner — Calendar & Todos</title>
+<style>
+  /* ---------- Theme tokens (light + dark via prefers-color-scheme) ---------- */
+  :root {
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-2: #efeff2;
+    --text: #1c1c1e;
+    --text-dim: #6b6b70;
+    --border: #d9d9de;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.14);
+    --danger: #ff3b30;
+    --good: #34c759;
+    --dot: #ff9500;
+    --today-ring: #0a84ff;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08);
+    /* safe-area fallbacks (0 where unsupported) */
+    --sa-top: env(safe-area-inset-top, 0px);
+    --sa-bottom: env(safe-area-inset-bottom, 0px);
+    --sa-left: env(safe-area-inset-left, 0px);
+    --sa-right: env(safe-area-inset-right, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --surface: #1c1c1e;
+      --surface-2: #2c2c2e;
+      --text: #f2f2f7;
+      --text-dim: #9b9ba0;
+      --border: #3a3a3c;
+      --accent: #0a84ff;
+      --accent-soft: rgba(10, 132, 255, 0.22);
+      --danger: #ff453a;
+      --good: #30d158;
+      --dot: #ff9f0a;
+      --today-ring: #0a84ff;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    /* prevent horizontal scroll */
+    overflow-x: hidden;
+  }
+  body {
+    /* safe-area padding so content clears notches/home indicator */
+    padding:
+      calc(var(--sa-top) + 8px)
+      calc(var(--sa-right) + 12px)
+      calc(var(--sa-bottom) + 24px)
+      calc(var(--sa-left) + 12px);
+    max-width: 760px;
+    margin: 0 auto;
+    line-height: 1.4;
+  }
+
+  h1 { font-size: 1.4rem; margin: 4px 0 12px; }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+  }
+
+  /* ---------- Buttons (large tap targets >= 44px) ---------- */
+  button {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    min-height: 44px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  button:active { filter: brightness(0.92); }
+  button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  button.danger  { background: transparent; color: var(--danger); border-color: var(--danger); }
+  button.ghost   { background: transparent; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  input, select {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-height: 44px;
+    width: 100%;
+  }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row > * { flex: 0 0 auto; }
+  .grow { flex: 1 1 auto; min-width: 0; }
+  .spacer { flex: 1 1 auto; }
+
+  /* ---------- Calendar ---------- */
+  .cal-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  .cal-title { font-size: 1.1rem; font-weight: 600; flex: 1 1 auto; text-align: center; }
+
+  .weekdays, .days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+  }
+  .weekdays div {
+    text-align: center;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    padding: 4px 0;
+    font-weight: 600;
+  }
+  .day {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: var(--surface-2);
+    font-size: 0.95rem;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .day.empty { background: transparent; }
+  .day.today { box-shadow: inset 0 0 0 2px var(--today-ring); font-weight: 700; }
+  .day.selected { background: var(--accent); color: #fff; }
+  .day .dot {
+    position: absolute;
+    bottom: 6px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--dot);
+  }
+  .day.selected .dot { background: #fff; }
+
+  /* ---------- Lists ---------- */
+  .list { list-style: none; margin: 0; padding: 0; }
+  .list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .list li:last-child { border-bottom: none; }
+  .item-main { flex: 1 1 auto; min-width: 0; }
+  .item-title { word-break: break-word; }
+  .item-sub { font-size: 0.78rem; color: var(--text-dim); }
+  .done .item-title { text-decoration: line-through; color: var(--text-dim); }
+
+  .check {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: var(--surface);
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; line-height: 1;
+    padding: 0; min-height: 0;
+  }
+  .check.on { background: var(--good); border-color: var(--good); color: #fff; }
+
+  .icon-btn {
+    min-height: 0; padding: 6px 10px; font-size: 0.85rem;
+  }
+
+  .muted { color: var(--text-dim); font-size: 0.85rem; }
+  .empty-note { color: var(--text-dim); padding: 8px 4px; font-style: italic; }
+
+  /* ---------- Voice ---------- */
+  #mic.listening { background: var(--danger); color: #fff; border-color: transparent; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+  #voicePanel { margin-top: 10px; }
+  #transcript {
+    min-height: 22px;
+    color: var(--text-dim);
+    font-style: italic;
+    word-break: break-word;
+  }
+  #voiceMsg { margin-top: 6px; font-size: 0.9rem; }
+  .ok { color: var(--good); }
+  .warn { color: var(--danger); }
+
+  .section-label { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin: 14px 0 4px; }
+
+  /* hidden helper */
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>📅 Planner</h1>
+
+  <!-- ============ VOICE ============ -->
+  <div class="card" id="voiceCard">
+    <div class="row">
+      <button id="mic" class="primary" type="button">🎤 Voice</button>
+      <div class="grow muted" id="voiceHint">Tap and speak a command, e.g. “add todo buy milk”.</div>
+    </div>
+    <div id="voicePanel">
+      <div id="transcript"></div>
+      <div id="voiceMsg"></div>
+    </div>
+  </div>
+
+  <!-- ============ CALENDAR ============ -->
+  <div class="card">
+    <div class="cal-head">
+      <button id="prevMonth" class="ghost" type="button" aria-label="Previous month">‹</button>
+      <div class="cal-title" id="calTitle">Month</div>
+      <button id="nextMonth" class="ghost" type="button" aria-label="Next month">›</button>
+      <button id="todayBtn" type="button">Today</button>
+    </div>
+    <div class="weekdays" id="weekdays"></div>
+    <div class="days" id="days"></div>
+  </div>
+
+  <!-- ============ SELECTED DAY EVENTS ============ -->
+  <div class="card">
+    <div class="row">
+      <h2 id="dayTitle" class="grow">Events</h2>
+      <button id="addEventBtn" class="primary" type="button">+ Add event</button>
+    </div>
+    <ul class="list" id="eventList"></ul>
+  </div>
+
+  <!-- ============ TODOS ============ -->
+  <div class="card">
+    <div class="row">
+      <h2 class="grow">Todos</h2>
+      <button id="addTodoBtn" class="primary" type="button">+ Add todo</button>
+    </div>
+
+    <div class="section-label">Active</div>
+    <ul class="list" id="todoActive"></ul>
+
+    <div class="section-label">Completed</div>
+    <ul class="list" id="todoDone"></ul>
+  </div>
+
+  <!-- ============ DATA ============ -->
+  <div class="card">
+    <div class="row">
+      <span class="muted grow">Data is saved on this device (localStorage).</span>
+      <button id="resetBtn" class="danger" type="button">Reset data</button>
+    </div>
+  </div>
+
+<script>
+"use strict";
+(function () {
+  /* =========================================================================
+     STATE + PERSISTENCE
+     - state.events: { "YYYY-MM-DD": [ {id, title, time} ] }
+     - state.todos:  [ {id, title, due (YYYY-MM-DD|null), done} ]
+     Every localStorage access is wrapped in try/catch so a quota/parse error
+     can never crash the app.
+     ========================================================================= */
+  var STORAGE_KEY = "planner.v1";
+
+  var state = { events: {}, todos: [] };
+
+  function loadState() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      var parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        state.events = (parsed.events && typeof parsed.events === "object") ? parsed.events : {};
+        state.todos = Array.isArray(parsed.todos) ? parsed.todos : [];
+      }
+    } catch (e) {
+      // Corrupt/unreadable data: start fresh rather than crash.
+      console.warn("loadState failed:", e);
+      state = { events: {}, todos: [] };
+    }
+  }
+
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      // Quota or private-mode write failure: keep running in memory.
+      console.warn("saveState failed:", e);
+      flashVoice("Couldn’t save — storage may be full.", "warn");
+    }
+  }
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  /* =========================================================================
+     DATE HELPERS
+     IMPORTANT (Safari): never use new Date("M/D/YYYY"). Build dates from
+     explicit numeric parts or parse strict ISO "YYYY-MM-DD" strings only.
+     We work with local "date keys" of the form YYYY-MM-DD.
+     ========================================================================= */
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  // Date object -> "YYYY-MM-DD" using LOCAL parts.
+  function dateKey(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  // "YYYY-MM-DD" -> Date built from explicit parts (safe in Safari).
+  function keyToDate(key) {
+    var p = key.split("-");
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  }
+
+  function todayKey() { return dateKey(new Date()); }
+
+  var MONTHS = ["January","February","March","April","May","June",
+                "July","August","September","October","November","December"];
+  var WEEKDAYS_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  var WEEKDAYS_LONG = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+  function prettyDate(key) {
+    var d = keyToDate(key);
+    return WEEKDAYS_LONG[d.getDay()] + ", " + MONTHS[d.getMonth()] + " " + d.getDate();
+  }
+
+  // Format "HH:MM" (24h) -> "h:mm AM/PM" for display. Returns "" if no/invalid time.
+  function prettyTime(t) {
+    if (!t) return "";
+    var p = t.split(":");
+    var h = Number(p[0]); var m = Number(p[1]);
+    if (isNaN(h) || isNaN(m)) return "";
+    var ampm = h >= 12 ? "PM" : "AM";
+    var h12 = h % 12; if (h12 === 0) h12 = 12;
+    return h12 + ":" + pad2(m) + " " + ampm;
+  }
+
+  /* =========================================================================
+     VIEW STATE (current month + selected day)
+     ========================================================================= */
+  var viewYear, viewMonth;            // month currently shown in the grid
+  var selectedKey = todayKey();       // selected day key
+
+  (function initView() {
+    var t = new Date();
+    viewYear = t.getFullYear();
+    viewMonth = t.getMonth();
+  })();
+
+  /* =========================================================================
+     DOM REFS
+     ========================================================================= */
+  var $ = function (id) { return document.getElementById(id); };
+  var weekdaysEl = $("weekdays");
+  var daysEl = $("days");
+  var calTitle = $("calTitle");
+  var dayTitle = $("dayTitle");
+  var eventListEl = $("eventList");
+  var todoActiveEl = $("todoActive");
+  var todoDoneEl = $("todoDone");
+
+  /* =========================================================================
+     "Does this day have a dot?" — events or todo due dates.
+     ========================================================================= */
+  function dueKeysSet() {
+    var set = {};
+    for (var i = 0; i < state.todos.length; i++) {
+      var td = state.todos[i];
+      if (td.due && !td.done) set[td.due] = true;
+    }
+    return set;
+  }
+  function dayHasMarker(key, dueSet) {
+    var hasEvent = state.events[key] && state.events[key].length > 0;
+    return hasEvent || !!dueSet[key];
+  }
+
+  /* =========================================================================
+     RENDER: weekday headers (built once)
+     ========================================================================= */
+  function renderWeekdays() {
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < 7; i++) {
+      var d = document.createElement("div");
+      d.textContent = WEEKDAYS_SHORT[i];
+      frag.appendChild(d);
+    }
+    weekdaysEl.appendChild(frag);
+  }
+
+  /* =========================================================================
+     RENDER: calendar grid for current view month.
+     Rebuilds only the day cells (small, bounded ~42 nodes), not the whole app.
+     ========================================================================= */
+  function renderCalendar() {
+    calTitle.textContent = MONTHS[viewMonth] + " " + viewYear;
+
+    var firstDay = new Date(viewYear, viewMonth, 1).getDay(); // 0=Sun
+    var daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    var tKey = todayKey();
+    var dueSet = dueKeysSet();
+
+    var frag = document.createDocumentFragment();
+
+    // leading blanks
+    for (var b = 0; b < firstDay; b++) {
+      var blank = document.createElement("div");
+      blank.className = "day empty";
+      frag.appendChild(blank);
+    }
+
+    for (var day = 1; day <= daysInMonth; day++) {
+      var key = viewYear + "-" + pad2(viewMonth + 1) + "-" + pad2(day);
+      var cell = document.createElement("div");
+      cell.className = "day";
+      cell.dataset.key = key;
+      cell.textContent = day;
+
+      if (key === tKey) cell.className += " today";
+      if (key === selectedKey) cell.className += " selected";
+
+      if (dayHasMarker(key, dueSet)) {
+        var dot = document.createElement("span");
+        dot.className = "dot";
+        cell.appendChild(dot);
+      }
+      frag.appendChild(cell);
+    }
+
+    daysEl.innerHTML = "";   // clear previous month's cells
+    daysEl.appendChild(frag);
+  }
+
+  /* =========================================================================
+     RENDER: selected-day events list
+     ========================================================================= */
+  function renderEvents() {
+    dayTitle.textContent = prettyDate(selectedKey);
+    eventListEl.innerHTML = "";
+
+    var list = (state.events[selectedKey] || []).slice();
+    // sort by time (empty times last)
+    list.sort(function (a, b) {
+      var ta = a.time || "99:99", tb = b.time || "99:99";
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+
+    if (list.length === 0) {
+      var li = document.createElement("li");
+      li.className = "empty-note";
+      li.textContent = "No events. Tap “+ Add event”.";
+      eventListEl.appendChild(li);
+      return;
+    }
+
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < list.length; i++) {
+      frag.appendChild(eventItem(list[i]));
+    }
+    eventListEl.appendChild(frag);
+  }
+
+  function eventItem(ev) {
+    var li = document.createElement("li");
+
+    var main = document.createElement("div");
+    main.className = "item-main";
+
+    var title = document.createElement("div");
+    title.className = "item-title";
+    title.textContent = ev.title;
+    main.appendChild(title);
+
+    var t = prettyTime(ev.time);
+    if (t) {
+      var sub = document.createElement("div");
+      sub.className = "item-sub";
+      sub.textContent = t;
+      main.appendChild(sub);
+    }
+
+    var del = document.createElement("button");
+    del.className = "ghost icon-btn";
+    del.textContent = "Delete";
+    del.addEventListener("click", function () { deleteEvent(ev.id); });
+
+    li.appendChild(main);
+    li.appendChild(del);
+    return li;
+  }
+
+  /* =========================================================================
+     RENDER: todos (active + completed)
+     ========================================================================= */
+  function renderTodos() {
+    todoActiveEl.innerHTML = "";
+    todoDoneEl.innerHTML = "";
+
+    var anyActive = false, anyDone = false;
+    var fragA = document.createDocumentFragment();
+    var fragD = document.createDocumentFragment();
+
+    for (var i = 0; i < state.todos.length; i++) {
+      var td = state.todos[i];
+      if (td.done) { fragD.appendChild(todoItem(td)); anyDone = true; }
+      else { fragA.appendChild(todoItem(td)); anyActive = true; }
+    }
+
+    if (!anyActive) fragA.appendChild(emptyLi("Nothing to do. Tap “+ Add todo”."));
+    if (!anyDone) fragD.appendChild(emptyLi("No completed todos yet."));
+
+    todoActiveEl.appendChild(fragA);
+    todoDoneEl.appendChild(fragD);
+  }
+
+  function emptyLi(text) {
+    var li = document.createElement("li");
+    li.className = "empty-note";
+    li.textContent = text;
+    return li;
+  }
+
+  function todoItem(td) {
+    var li = document.createElement("li");
+    if (td.done) li.className = "done";
+
+    var check = document.createElement("button");
+    check.className = "check" + (td.done ? " on" : "");
+    check.textContent = td.done ? "✓" : "";
+    check.setAttribute("aria-label", td.done ? "Mark not done" : "Mark done");
+    check.addEventListener("click", function () { toggleTodo(td.id); });
+
+    var main = document.createElement("div");
+    main.className = "item-main";
+
+    var title = document.createElement("div");
+    title.className = "item-title";
+    title.textContent = td.title;
+    main.appendChild(title);
+
+    if (td.due) {
+      var sub = document.createElement("div");
+      sub.className = "item-sub";
+      sub.textContent = "Due " + prettyDate(td.due);
+      main.appendChild(sub);
+    }
+
+    var del = document.createElement("button");
+    del.className = "ghost icon-btn";
+    del.textContent = "Delete";
+    del.addEventListener("click", function () { deleteTodo(td.id); });
+
+    li.appendChild(check);
+    li.appendChild(main);
+    li.appendChild(del);
+    return li;
+  }
+
+  /* =========================================================================
+     MUTATIONS (each saves + re-renders the affected parts)
+     ========================================================================= */
+  function addEvent(key, title, time) {
+    if (!title) return;
+    if (!state.events[key]) state.events[key] = [];
+    state.events[key].push({ id: uid(), title: title, time: time || "" });
+    saveState();
+    if (key === selectedKey) renderEvents();
+    renderCalendar();
+  }
+
+  function deleteEvent(id) {
+    var list = state.events[selectedKey];
+    if (!list) return;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) { list.splice(i, 1); break; }
+    }
+    if (list.length === 0) delete state.events[selectedKey];
+    saveState();
+    renderEvents();
+    renderCalendar();
+  }
+
+  function addTodo(title, due) {
+    if (!title) return;
+    state.todos.push({ id: uid(), title: title, due: due || null, done: false });
+    saveState();
+    renderTodos();
+    renderCalendar(); // due date may add a dot
+  }
+
+  function toggleTodo(id) {
+    for (var i = 0; i < state.todos.length; i++) {
+      if (state.todos[i].id === id) {
+        state.todos[i].done = !state.todos[i].done;
+        break;
+      }
+    }
+    saveState();
+    renderTodos();
+    renderCalendar();
+  }
+
+  // Mark the first ACTIVE todo whose title contains `text` (case-insensitive).
+  // Returns the matched todo or null. Used by voice "complete <text>".
+  function completeTodoByText(text) {
+    var needle = text.toLowerCase().trim();
+    if (!needle) return null;
+    for (var i = 0; i < state.todos.length; i++) {
+      var td = state.todos[i];
+      if (!td.done && td.title.toLowerCase().indexOf(needle) !== -1) {
+        td.done = true;
+        saveState();
+        renderTodos();
+        renderCalendar();
+        return td;
+      }
+    }
+    return null;
+  }
+
+  function deleteTodo(id) {
+    for (var i = 0; i < state.todos.length; i++) {
+      if (state.todos[i].id === id) { state.todos.splice(i, 1); break; }
+    }
+    saveState();
+    renderTodos();
+    renderCalendar();
+  }
+
+  /* =========================================================================
+     CALENDAR INTERACTION
+     ========================================================================= */
+  function selectDay(key) {
+    selectedKey = key;
+    renderCalendar();
+    renderEvents();
+  }
+
+  // Event delegation: one listener on the grid (cleaner than per-cell).
+  daysEl.addEventListener("click", function (e) {
+    var cell = e.target.closest ? e.target.closest(".day") : null;
+    if (!cell || cell.classList.contains("empty")) return;
+    var key = cell.dataset.key;
+    if (key) selectDay(key);
+  });
+
+  function changeMonth(delta) {
+    viewMonth += delta;
+    if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+    else if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+    renderCalendar();
+  }
+
+  $("prevMonth").addEventListener("click", function () { changeMonth(-1); });
+  $("nextMonth").addEventListener("click", function () { changeMonth(1); });
+  $("todayBtn").addEventListener("click", function () {
+    var t = new Date();
+    viewYear = t.getFullYear();
+    viewMonth = t.getMonth();
+    selectDay(todayKey());
+  });
+
+  /* =========================================================================
+     ADD CONTROLS (touch/typing path — works without voice)
+     Using prompt() keeps the UI simple and dependency-free.
+     ========================================================================= */
+  $("addEventBtn").addEventListener("click", function () {
+    var title = window.prompt("Event title for " + prettyDate(selectedKey) + ":");
+    if (title === null) return;
+    title = title.trim();
+    if (!title) return;
+    var time = window.prompt("Time? (optional, e.g. 3pm or 15:30) — leave blank for none:", "");
+    var parsed = time ? parseTime(time) : "";
+    addEvent(selectedKey, title, parsed);
+  });
+
+  $("addTodoBtn").addEventListener("click", function () {
+    var title = window.prompt("Todo:");
+    if (title === null) return;
+    title = title.trim();
+    if (!title) return;
+    var due = window.prompt("Due date? (optional, YYYY-MM-DD) — leave blank for none:", "");
+    var dueKey = null;
+    if (due && due.trim()) {
+      var k = due.trim();
+      // accept only strict ISO YYYY-MM-DD
+      if (/^\d{4}-\d{2}-\d{2}$/.test(k)) dueKey = k;
+      else flashVoice("Ignored due date (use YYYY-MM-DD).", "warn");
+    }
+    addTodo(title, dueKey);
+  });
+
+  $("resetBtn").addEventListener("click", function () {
+    if (!window.confirm("Delete all events and todos on this device?")) return;
+    state = { events: {}, todos: [] };
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+    selectedKey = todayKey();
+    renderAll();
+    flashVoice("All data reset.", "ok");
+  });
+
+  /* =========================================================================
+     TIME / DATE PARSING (for both prompts and voice)
+     ========================================================================= */
+  // Parse "3pm", "3:30 pm", "15:30", "9am" -> "HH:MM" (24h). "" if not parseable.
+  function parseTime(str) {
+    if (!str) return "";
+    var s = str.toLowerCase().trim();
+
+    // 24h "HH:MM"
+    var m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) {
+      var H = Number(m[1]), M = Number(m[2]);
+      if (H >= 0 && H <= 23 && M >= 0 && M <= 59) return pad2(H) + ":" + pad2(M);
+    }
+
+    // 12h with am/pm: "3pm", "3:30pm", "3 pm"
+    m = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/);
+    if (m) {
+      var h = Number(m[1]);
+      var min = m[2] ? Number(m[2]) : 0;
+      var mer = m[3];
+      if (h >= 1 && h <= 12 && min >= 0 && min <= 59) {
+        if (mer === "pm" && h !== 12) h += 12;
+        if (mer === "am" && h === 12) h = 0;
+        return pad2(h) + ":" + pad2(min);
+      }
+    }
+    return "";
+  }
+
+  // Resolve a spoken day word to a date key relative to today.
+  // Supports: today, tomorrow, and weekday names (next occurrence, incl. today).
+  function resolveDateWord(word) {
+    var w = word.toLowerCase().trim();
+    var base = new Date();
+    if (w === "today") return todayKey();
+    if (w === "tomorrow") {
+      var t = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1);
+      return dateKey(t);
+    }
+    var idx = -1;
+    for (var i = 0; i < WEEKDAYS_LONG.length; i++) {
+      if (WEEKDAYS_LONG[i].toLowerCase() === w || WEEKDAYS_SHORT[i].toLowerCase() === w) { idx = i; break; }
+    }
+    if (idx !== -1) {
+      var cur = base.getDay();
+      var add = (idx - cur + 7) % 7; // 0..6; today if same weekday
+      var d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + add);
+      return dateKey(d);
+    }
+    return null;
+  }
+
+  /* =========================================================================
+     VOICE COMMAND PARSER (rule-based, case-insensitive)
+     Returns a human-readable confirmation string. Mutates state as needed.
+     ========================================================================= */
+  function processCommand(raw) {
+    var text = (raw || "").trim();
+    if (!text) return { msg: "Didn’t catch a command.", ok: false };
+    var lower = text.toLowerCase();
+
+    // ---- add todo / add task <text> ----
+    var m = lower.match(/^(?:add|create)\s+(?:todo|task)\s+(.+)$/);
+    if (m) {
+      var todoText = sliceOriginal(text, m[1]);
+      addTodo(todoText, null);
+      return { msg: "Added todo: " + todoText, ok: true, speak: "Added todo " + todoText };
+    }
+
+    // ---- complete / done <text> ----
+    m = lower.match(/^(?:complete|done|finish)\s+(.+)$/);
+    if (m) {
+      var target = sliceOriginal(text, m[1]);
+      var hit = completeTodoByText(target);
+      if (hit) return { msg: "Completed: " + hit.title, ok: true, speak: "Completed " + hit.title };
+      return { msg: "No active todo matching “" + target + "”.", ok: false };
+    }
+
+    // ---- what's on today / read my todos ----
+    if (/^(what'?s on today|what is on today|today'?s events)\??$/.test(lower)) {
+      return readTodayEvents();
+    }
+    if (/^(read my todos|read todos|what are my todos|list todos)\??$/.test(lower)) {
+      return readTodos();
+    }
+
+    // ---- add event / schedule <text> [date] [at time] ----
+    m = lower.match(/^(?:add event|schedule|new event)\s+(.+)$/);
+    if (m) {
+      return parseEventCommand(sliceOriginal(text, m[1]));
+    }
+
+    return { msg: "Didn’t catch a command. Try “add todo …” or “add event …”.", ok: false };
+  }
+
+  // Given the original (case-preserved) text and a lowercased captured tail,
+  // return the corresponding slice of the ORIGINAL so casing is preserved.
+  function sliceOriginal(original, lowerTail) {
+    var idx = original.toLowerCase().indexOf(lowerTail);
+    return idx === -1 ? lowerTail.trim() : original.slice(idx).trim();
+  }
+
+  // Parse the remainder of an "add event" command:
+  //   "<title> [today|tomorrow|weekday] [at <time>]"
+  function parseEventCommand(rest) {
+    var work = rest;
+    var dateK = null;
+    var time = "";
+
+    // pull out "at <time>" (time may be "3pm", "3:30 pm", "15:30")
+    var atMatch = work.match(/\bat\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?|\d{1,2}:\d{2})\b/i);
+    if (atMatch) {
+      var parsed = parseTime(atMatch[1].replace(/\s+/g, ""));
+      if (parsed) {
+        time = parsed;
+        work = (work.slice(0, atMatch.index) + work.slice(atMatch.index + atMatch[0].length)).trim();
+      }
+    }
+
+    // pull out a trailing/explicit date word (today/tomorrow/weekday)
+    var words = work.split(/\s+/);
+    for (var i = words.length - 1; i >= 0; i--) {
+      var rk = resolveDateWord(words[i]);
+      if (rk) {
+        dateK = rk;
+        words.splice(i, 1);
+        break;
+      }
+    }
+    var title = words.join(" ").replace(/\s+/g, " ").trim();
+    // strip a dangling "on" left before a removed date word
+    title = title.replace(/\s+on$/i, "").trim();
+
+    if (!title) return { msg: "What’s the event called?", ok: false };
+    if (!dateK) dateK = todayKey();
+
+    addEvent(dateK, title, time);
+    selectDay(dateK); // jump to the day so the user sees it
+
+    var when = prettyDate(dateK) + (time ? " at " + prettyTime(time) : "");
+    return { msg: "Added event: " + title + " — " + when, ok: true,
+             speak: "Added event " + title + " on " + when };
+  }
+
+  function readTodayEvents() {
+    var list = (state.events[todayKey()] || []).slice();
+    list.sort(function (a, b) {
+      var ta = a.time || "99:99", tb = b.time || "99:99";
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+    if (list.length === 0) {
+      return { msg: "Nothing scheduled today.", ok: true, speak: "You have nothing scheduled today." };
+    }
+    var parts = list.map(function (ev) {
+      var t = prettyTime(ev.time);
+      return ev.title + (t ? " at " + t : "");
+    });
+    var spoken = "Today you have: " + parts.join(", ") + ".";
+    return { msg: "Today: " + parts.join(" · "), ok: true, speak: spoken };
+  }
+
+  function readTodos() {
+    var active = state.todos.filter(function (t) { return !t.done; });
+    if (active.length === 0) {
+      return { msg: "No active todos.", ok: true, speak: "You have no active todos." };
+    }
+    var titles = active.map(function (t) { return t.title; });
+    return { msg: "Todos: " + titles.join(" · "), ok: true,
+             speak: "Your todos are: " + titles.join(", ") + "." };
+  }
+
+  /* =========================================================================
+     SPEECH SYNTHESIS (read-back) — feature-detected, never throws.
+     ========================================================================= */
+  function speak(text) {
+    try {
+      if (!("speechSynthesis" in window) || !text) return;
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-US";
+      window.speechSynthesis.cancel(); // avoid overlap/backlog (memory)
+      window.speechSynthesis.speak(u);
+    } catch (e) {
+      // ignore — read-back is optional
+    }
+  }
+
+  /* =========================================================================
+     SPEECH RECOGNITION (progressive enhancement)
+     ========================================================================= */
+  var micBtn = $("mic");
+  var transcriptEl = $("transcript");
+  var voiceHint = $("voiceHint");
+
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recognition = null;
+  var listening = false;
+  var latestTranscript = "";      // most recent (interim or final) text
+  var silenceTimer = null;        // fires when no new result for ~1.2s
+  var SILENCE_MS = 1200;
+  var manualStop = false;         // user tapped to stop (don't auto-restart)
+
+  function flashVoice(msg, cls) {
+    var el = $("voiceMsg");
+    el.textContent = msg;
+    el.className = cls || "";
+  }
+
+  if (!SR) {
+    // No Web Speech API (e.g. Home-Screen PWA, some browsers): hide mic, inform.
+    micBtn.hidden = true;
+    voiceHint.textContent = "Voice isn’t available here — use the + buttons.";
+  } else {
+    setupRecognition();
+    micBtn.addEventListener("click", function () {
+      // Must be triggered by a user tap (iOS requirement).
+      if (listening) stopListening(true);
+      else startListening();
+    });
+  }
+
+  function setupRecognition() {
+    recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false; // iOS ignores this; our timer handles end.
+
+    recognition.onresult = function (event) {
+      var txt = "";
+      for (var i = event.resultIndex; i < event.results.length; i++) {
+        txt += event.results[i][0].transcript;
+      }
+      latestTranscript = txt;
+      transcriptEl.textContent = "“" + txt + "”";
+      // Reset the silence timer on every new chunk. iOS end-of-speech events
+      // are unreliable, so we finalize ourselves after ~1.2s of no updates.
+      resetSilenceTimer();
+    };
+
+    recognition.onerror = function (event) {
+      // Never throw. Map common errors to friendly messages.
+      clearSilenceTimer();
+      var err = event && event.error;
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        flashVoice("Microphone permission denied — you can still type.", "warn");
+      } else if (err === "no-speech") {
+        flashVoice("Didn’t hear anything. Tap 🎤 and try again.", "warn");
+      } else if (err === "network") {
+        flashVoice("Voice needs internet — you can still type.", "warn");
+      } else if (err === "aborted") {
+        // user-initiated stop; no message needed
+      } else {
+        flashVoice("Voice error — you can still type.", "warn");
+      }
+      setListeningUI(false);
+    };
+
+    recognition.onend = function () {
+      // Recognition stopped (by us, by silence, or by the platform).
+      // If we still consider ourselves listening and the user didn't stop,
+      // finalize whatever we have.
+      if (listening && !manualStop) {
+        finalizeUtterance();
+      }
+      setListeningUI(false);
+    };
+  }
+
+  function startListening() {
+    if (!recognition || listening) return;
+    manualStop = false;
+    latestTranscript = "";
+    transcriptEl.textContent = "Listening…";
+    flashVoice("", "");
+    try {
+      recognition.start();
+      setListeningUI(true);
+    } catch (e) {
+      // start() can throw if called too quickly after a previous session.
+      flashVoice("Couldn’t start voice — tap 🎤 again.", "warn");
+      setListeningUI(false);
+    }
+  }
+
+  function stopListening(byUser) {
+    if (!recognition) return;
+    manualStop = !!byUser;
+    clearSilenceTimer();
+    // If stopping by user with a transcript, process it.
+    if (byUser && latestTranscript.trim()) {
+      finalizeUtterance();
+    }
+    try { recognition.stop(); } catch (e) { /* ignore */ }
+    setListeningUI(false);
+  }
+
+  // Finalize the current utterance: process the latest transcript once,
+  // then guard against double-processing.
+  var processing = false;
+  function finalizeUtterance() {
+    if (processing) return;
+    var text = latestTranscript.trim();
+    if (!text) { return; }
+    processing = true;
+    clearSilenceTimer();
+    listening = false;            // we've consumed this utterance
+    try { recognition.stop(); } catch (e) { /* ignore */ }
+
+    var result = processCommand(text);
+    flashVoice(result.msg, result.ok ? "ok" : "warn");
+    if (result.ok && result.speak) speak(result.speak);
+
+    // brief lock so a trailing onend/onresult can't re-process
+    setTimeout(function () { processing = false; }, 300);
+  }
+
+  function resetSilenceTimer() {
+    clearSilenceTimer();
+    silenceTimer = setTimeout(function () {
+      // No new interim result for SILENCE_MS → treat as end of utterance.
+      finalizeUtterance();
+    }, SILENCE_MS);
+  }
+  function clearSilenceTimer() {
+    if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+  }
+
+  function setListeningUI(on) {
+    listening = on;
+    if (on) {
+      micBtn.classList.add("listening");
+      micBtn.textContent = "■ Stop";
+    } else {
+      micBtn.classList.remove("listening");
+      micBtn.textContent = "🎤 Voice";
+      if (transcriptEl.textContent === "Listening…") transcriptEl.textContent = "";
+    }
+  }
+
+  /* =========================================================================
+     INITIAL RENDER
+     ========================================================================= */
+  function renderAll() {
+    renderCalendar();
+    renderEvents();
+    renderTodos();
+  }
+
+  loadState();
+  renderWeekdays();
+  renderAll();
+
+  // Clean up speech on page hide to avoid leaks/hung mic in Safari.
+  window.addEventListener("pagehide", function () {
+    clearSilenceTimer();
+    try { if (recognition) recognition.abort(); } catch (e) {}
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
