@@ -29,8 +29,14 @@
     --sa-left: env(safe-area-inset-left, 0px);
     --sa-right: env(safe-area-inset-right, 0px);
   }
+  /* Dark tokens. Applied two ways:
+     1) automatically when the system prefers dark AND the user hasn't forced
+        light (data-theme="light");
+     2) always when the user forces dark via the toggle (data-theme="dark").
+     The token list is duplicated in both selectors on purpose — keeping it
+     plain CSS avoids any build step. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #000000;
       --surface: #1c1c1e;
       --surface-2: #2c2c2e;
@@ -45,6 +51,21 @@
       --today-ring: #0a84ff;
       --shadow: 0 1px 3px rgba(0,0,0,0.4);
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #000000;
+    --surface: #1c1c1e;
+    --surface-2: #2c2c2e;
+    --text: #f2f2f7;
+    --text-dim: #9b9ba0;
+    --border: #3a3a3c;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.22);
+    --danger: #ff453a;
+    --good: #30d158;
+    --dot: #ff9f0a;
+    --today-ring: #0a84ff;
+    --shadow: 0 1px 3px rgba(0,0,0,0.4);
   }
 
   * { box-sizing: border-box; }
@@ -216,17 +237,27 @@
 </style>
 </head>
 <body>
-  <h1>📅 Planner</h1>
+  <div class="row" style="margin-bottom: 8px;">
+    <h1 class="grow" style="margin:0;">📅 Planner</h1>
+    <button id="themeBtn" type="button" aria-label="Toggle light or dark mode">🌙 Dark</button>
+  </div>
 
-  <!-- ============ VOICE ============ -->
+  <!-- ============ VOICE (primary input) ============ -->
   <div class="card" id="voiceCard">
     <div class="row">
-      <button id="mic" class="primary" type="button">🎤 Voice</button>
-      <div class="grow muted" id="voiceHint">Tap and speak a command, e.g. “add todo buy milk”.</div>
+      <button id="mic" class="primary" type="button">🎤 Speak</button>
+      <div class="grow muted" id="voiceHint">Just speak — it adds a todo, or an event if you mention a day/time. E.g. “buy milk” or “dentist tomorrow at 3pm”.</div>
     </div>
     <div id="voicePanel">
       <div id="transcript"></div>
       <div id="voiceMsg"></div>
+    </div>
+    <!-- Typed fallback so the app still works where voice is unavailable.
+         Uses the exact same auto-classifying parser as voice. -->
+    <div class="row" style="margin-top:10px;">
+      <input id="cmdInput" class="grow" type="text"
+             placeholder="…or type here and press Enter"
+             enterkeyhint="done" autocapitalize="sentences" autocomplete="off">
     </div>
   </div>
 
@@ -244,19 +275,13 @@
 
   <!-- ============ SELECTED DAY EVENTS ============ -->
   <div class="card">
-    <div class="row">
-      <h2 id="dayTitle" class="grow">Events</h2>
-      <button id="addEventBtn" class="primary" type="button">+ Add event</button>
-    </div>
+    <h2 id="dayTitle">Events</h2>
     <ul class="list" id="eventList"></ul>
   </div>
 
   <!-- ============ TODOS ============ -->
   <div class="card">
-    <div class="row">
-      <h2 class="grow">Todos</h2>
-      <button id="addTodoBtn" class="primary" type="button">+ Add todo</button>
-    </div>
+    <h2>Todos</h2>
 
     <div class="section-label">Active</div>
     <ul class="list" id="todoActive"></ul>
@@ -685,35 +710,8 @@
   });
 
   /* =========================================================================
-     ADD CONTROLS (touch/typing path — works without voice)
-     Using prompt() keeps the UI simple and dependency-free.
+     RESET
      ========================================================================= */
-  $("addEventBtn").addEventListener("click", function () {
-    var title = window.prompt("Event title for " + prettyDate(selectedKey) + ":");
-    if (title === null) return;
-    title = title.trim();
-    if (!title) return;
-    var time = window.prompt("Time? (optional, e.g. 3pm or 15:30) — leave blank for none:", "");
-    var parsed = time ? parseTime(time) : "";
-    addEvent(selectedKey, title, parsed);
-  });
-
-  $("addTodoBtn").addEventListener("click", function () {
-    var title = window.prompt("Todo:");
-    if (title === null) return;
-    title = title.trim();
-    if (!title) return;
-    var due = window.prompt("Due date? (optional, YYYY-MM-DD) — leave blank for none:", "");
-    var dueKey = null;
-    if (due && due.trim()) {
-      var k = due.trim();
-      // accept only strict ISO YYYY-MM-DD
-      if (/^\d{4}-\d{2}-\d{2}$/.test(k)) dueKey = k;
-      else flashVoice("Ignored due date (use YYYY-MM-DD).", "warn");
-    }
-    addTodo(title, dueKey);
-  });
-
   $("resetBtn").addEventListener("click", function () {
     if (!window.confirm("Delete all events and todos on this device?")) return;
     state = { events: {}, todos: [] };
@@ -782,27 +780,10 @@
      ========================================================================= */
   function processCommand(raw) {
     var text = (raw || "").trim();
-    if (!text) return { msg: "Didn’t catch a command.", ok: false };
+    if (!text) return { msg: "Didn’t catch anything.", ok: false };
     var lower = text.toLowerCase();
 
-    // ---- add todo / add task <text> ----
-    var m = lower.match(/^(?:add|create)\s+(?:todo|task)\s+(.+)$/);
-    if (m) {
-      var todoText = sliceOriginal(text, m[1]);
-      addTodo(todoText, null);
-      return { msg: "Added todo: " + todoText, ok: true, speak: "Added todo " + todoText };
-    }
-
-    // ---- complete / done <text> ----
-    m = lower.match(/^(?:complete|done|finish)\s+(.+)$/);
-    if (m) {
-      var target = sliceOriginal(text, m[1]);
-      var hit = completeTodoByText(target);
-      if (hit) return { msg: "Completed: " + hit.title, ok: true, speak: "Completed " + hit.title };
-      return { msg: "No active todo matching “" + target + "”.", ok: false };
-    }
-
-    // ---- what's on today / read my todos ----
+    // ---- read-back queries (handled before adding) ----
     if (/^(what'?s on today|what is on today|today'?s events)\??$/.test(lower)) {
       return readTodayEvents();
     }
@@ -810,13 +791,59 @@
       return readTodos();
     }
 
-    // ---- add event / schedule <text> [date] [at time] ----
-    m = lower.match(/^(?:add event|schedule|new event)\s+(.+)$/);
+    // ---- complete / done <text> ----
+    var m = lower.match(/^(?:complete|done|finish|mark done)\s+(.+)$/);
     if (m) {
-      return parseEventCommand(sliceOriginal(text, m[1]));
+      var target = sliceOriginal(text, m[1]);
+      var hit = completeTodoByText(target);
+      if (hit) return { msg: "Completed: " + hit.title, ok: true, speak: "Completed " + hit.title };
+      return { msg: "No active todo matching “" + target + "”.", ok: false };
     }
 
-    return { msg: "Didn’t catch a command. Try “add todo …” or “add event …”.", ok: false };
+    // ---- otherwise: just add it, auto-deciding event vs todo ----
+    // Strip an optional leading verb ("add", "schedule", "remind me to", …).
+    // If the user explicitly says "todo/task" or "event/reminder", honor it;
+    // otherwise we auto-classify from whether a day/time was mentioned.
+    var forced = null;
+    var body = text;
+    var vm = lower.match(/^(?:please\s+)?(?:add|create|schedule|new|make|set(?:\s+up)?|remind\s+me\s+to)\s+(?:a\s+|an\s+)?(todo|task|event|reminder|appointment|meeting)?\b/);
+    if (vm) {
+      if (vm[1] === "todo" || vm[1] === "task") forced = "todo";
+      else if (vm[1]) forced = "event"; // event / reminder / appointment / meeting
+      body = text.slice(vm[0].length).trim();
+      // tidy a leftover "to"/"a" e.g. "remind me to call" -> "call"
+      body = body.replace(/^(?:to|a|an)\s+/i, "").trim();
+    }
+    if (!body) body = text;
+
+    return classifyAndAdd(body, forced);
+  }
+
+  // Decide event vs todo and create it.
+  // forced: "event" | "todo" | null (auto).
+  function classifyAndAdd(body, forced) {
+    var w = extractWhen(body);
+    var title = (w.title || body).trim();
+    if (!title) return { msg: "Didn’t catch anything to add.", ok: false };
+
+    var isEvent;
+    if (forced === "event") isEvent = true;
+    else if (forced === "todo") isEvent = false;
+    else isEvent = (w.hadDate || w.hadTime); // auto: a day/time → event
+
+    if (isEvent) {
+      var dateK = w.dateKey || todayKey();   // default to today
+      addEvent(dateK, title, w.time);
+      selectDay(dateK);                       // jump so the user sees it
+      var when = prettyDate(dateK) + (w.time ? " at " + prettyTime(w.time) : "");
+      return { msg: "Added event: " + title + " — " + when, ok: true,
+               speak: "Added event " + title + " on " + when };
+    }
+    // todo (may carry a due date if one was mentioned)
+    var due = w.hadDate ? w.dateKey : null;
+    addTodo(title, due);
+    return { msg: "Added todo: " + title + (due ? " (due " + prettyDate(due) + ")" : ""),
+             ok: true, speak: "Added todo " + title };
   }
 
   // Given the original (case-preserved) text and a lowercased captured tail,
@@ -826,46 +853,48 @@
     return idx === -1 ? lowerTail.trim() : original.slice(idx).trim();
   }
 
-  // Parse the remainder of an "add event" command:
-  //   "<title> [today|tomorrow|weekday] [at <time>]"
-  function parseEventCommand(rest) {
+  // Pull a date and/or time out of free text and return the leftover title.
+  //   "dentist tomorrow at 3pm" -> { title:"dentist", dateKey:<tomorrow>,
+  //                                  time:"15:00", hadDate:true, hadTime:true }
+  // Recognizes: "at <time>" or a bare time ("3pm", "3:30 pm", "15:30"), and a
+  // date word (today / tomorrow / weekday).
+  function extractWhen(rest) {
     var work = rest;
-    var dateK = null;
-    var time = "";
+    var dateK = null, time = "", hadDate = false, hadTime = false;
 
-    // pull out "at <time>" (time may be "3pm", "3:30 pm", "15:30")
+    // "at <time>" — am/pm optional here because "at" signals a time
     var atMatch = work.match(/\bat\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?|\d{1,2}:\d{2})\b/i);
     if (atMatch) {
       var parsed = parseTime(atMatch[1].replace(/\s+/g, ""));
       if (parsed) {
-        time = parsed;
+        time = parsed; hadTime = true;
         work = (work.slice(0, atMatch.index) + work.slice(atMatch.index + atMatch[0].length)).trim();
       }
     }
+    // bare time without "at" — require am/pm or HH:MM so we don't grab plain numbers
+    if (!hadTime) {
+      var bare = work.match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)|\d{1,2}:\d{2})\b/i);
+      if (bare) {
+        var p2 = parseTime(bare[1].replace(/\s+/g, ""));
+        if (p2) {
+          time = p2; hadTime = true;
+          work = (work.slice(0, bare.index) + work.slice(bare.index + bare[0].length)).trim();
+        }
+      }
+    }
 
-    // pull out a trailing/explicit date word (today/tomorrow/weekday)
+    // a date word (today / tomorrow / weekday)
     var words = work.split(/\s+/);
     for (var i = words.length - 1; i >= 0; i--) {
       var rk = resolveDateWord(words[i]);
-      if (rk) {
-        dateK = rk;
-        words.splice(i, 1);
-        break;
-      }
+      if (rk) { dateK = rk; hadDate = true; words.splice(i, 1); break; }
     }
+
     var title = words.join(" ").replace(/\s+/g, " ").trim();
-    // strip a dangling "on" left before a removed date word
-    title = title.replace(/\s+on$/i, "").trim();
+    // tidy connector words left behind around a removed date ("on", trailing/leading)
+    title = title.replace(/\s+on\s*$/i, "").replace(/^on\s+/i, "").trim();
 
-    if (!title) return { msg: "What’s the event called?", ok: false };
-    if (!dateK) dateK = todayKey();
-
-    addEvent(dateK, title, time);
-    selectDay(dateK); // jump to the day so the user sees it
-
-    var when = prettyDate(dateK) + (time ? " at " + prettyTime(time) : "");
-    return { msg: "Added event: " + title + " — " + when, ok: true,
-             speak: "Added event " + title + " on " + when };
+    return { title: title, dateKey: dateK, time: time, hadDate: hadDate, hadTime: hadTime };
   }
 
   function readTodayEvents() {
@@ -934,7 +963,7 @@
   if (!SR) {
     // No Web Speech API (e.g. Home-Screen PWA, some browsers): hide mic, inform.
     micBtn.hidden = true;
-    voiceHint.textContent = "Voice isn’t available here — use the + buttons.";
+    voiceHint.textContent = "Voice isn’t available here — type below and press Enter instead.";
   } else {
     setupRecognition();
     micBtn.addEventListener("click", function () {
@@ -1061,6 +1090,57 @@
       if (transcriptEl.textContent === "Listening…") transcriptEl.textContent = "";
     }
   }
+
+  /* =========================================================================
+     TYPED FALLBACK INPUT — same auto-classifying parser as voice.
+     Submits on Enter. Keeps the app fully usable where voice is unavailable.
+     ========================================================================= */
+  var cmdInput = $("cmdInput");
+  cmdInput.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    var text = cmdInput.value.trim();
+    if (!text) return;
+    var result = processCommand(text);
+    flashVoice(result.msg, result.ok ? "ok" : "warn");
+    if (result.ok) cmdInput.value = "";
+  });
+
+  /* =========================================================================
+     THEME TOGGLE (light / dark) — overrides the system preference and
+     persists the choice. Wrapped in try/catch like all storage access.
+     ========================================================================= */
+  var THEME_KEY = "planner.theme";
+  var themeBtn = $("themeBtn");
+
+  function systemPrefersDark() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+  function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") || "auto";
+  }
+  function effectiveDark() {
+    var t = currentTheme();
+    if (t === "dark") return true;
+    if (t === "light") return false;
+    return systemPrefersDark(); // "auto"
+  }
+  function applyTheme(t) {
+    var root = document.documentElement;
+    if (t === "light" || t === "dark") root.setAttribute("data-theme", t);
+    else root.removeAttribute("data-theme");
+    // Button shows the mode you'd switch TO.
+    themeBtn.textContent = effectiveDark() ? "☀️ Light" : "🌙 Dark";
+  }
+  themeBtn.addEventListener("click", function () {
+    var next = effectiveDark() ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
+  });
+  (function initTheme() {
+    var saved = "auto";
+    try { saved = localStorage.getItem(THEME_KEY) || "auto"; } catch (e) { /* ignore */ }
+    applyTheme(saved);
+  })();
 
   /* =========================================================================
      INITIAL RENDER
